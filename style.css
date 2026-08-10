@@ -168,20 +168,7 @@ body { overflow: hidden; }
 .brand-text h1 { font-size: 17px; font-weight: 600; letter-spacing: .01em; }
 .brand-text p { font-size: 12px; color: var(--text-2); }
 
-.header-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.field { display: flex; align-items: center; gap: 8px; }
-.field-label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
-.select {
-  padding: 5px 10px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  font-size: 13px;
-  cursor: pointer;
-}
-.select:disabled { opacity: .55; cursor: not-allowed; }
-.select:focus-visible, .btn:focus-visible, .check input:focus-visible,
-.scroll-area:focus-visible, summary:focus-visible {
+.btn:focus-visible, .scroll-area:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -220,70 +207,33 @@ body { overflow: hidden; }
 .session-badge[data-state="running"] .dot { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
-/* ---------- 状態バー ---------- */
-.statusbar {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-.pill {
+/* ---------- 入力状態（1行だけのシンプル表示） ---------- */
+.status-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-1);
-  font-size: 12.5px;
-  color: var(--text-3);
-}
-.pill-label { color: var(--text-2); white-space: nowrap; }
-.pill-value { font-weight: 600; color: var(--text-3); white-space: nowrap; }
-
-.pill[data-state="ok"]    { border-left-color: var(--ok);     color: var(--ok); }
-.pill[data-state="warn"]  { border-left-color: var(--warn);   color: var(--warn); }
-.pill[data-state="error"] { border-left-color: var(--danger); color: var(--danger); }
-.pill[data-state="ok"]    .pill-value { color: var(--ok); }
-.pill[data-state="warn"]  .pill-value { color: var(--warn); }
-.pill[data-state="error"] .pill-value { color: var(--danger); }
-.pill[data-state="ok"] .dot { opacity: 1; }
-
-/* 音声レベルメーター */
-.meter {
-  flex: 1 1 auto;
-  min-width: 28px;
-  height: 5px;
-  margin-left: auto;
-  border-radius: var(--r-pill);
-  background: var(--surface-3);
-  overflow: hidden;
-}
-.meter-bar {
-  display: block;
-  width: 0%;
-  height: 100%;
-  border-radius: var(--r-pill);
-  background: linear-gradient(90deg, var(--ok), var(--accent));
-  transition: width 90ms linear;
-}
-
-/* ---------- ツールバー ---------- */
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 18px;
   flex-wrap: wrap;
-  padding: 10px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-1);
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--text-2);
 }
-.toolbar-main, .toolbar-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stat { display: inline-flex; align-items: center; gap: 6px; }
+.stat b { font-weight: 600; color: var(--text-3); }
+.stat[data-state="ok"] b    { color: var(--ok); }
+.stat[data-state="warn"] b  { color: var(--warn); }
+.stat[data-state="error"] b { color: var(--danger); }
+
+/* ---------- 操作 ---------- */
+.main-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sub-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 2px;
+}
+.sub-controls .grow { flex: 1 1 auto; }
+.sub-controls .count { font-size: 12px; color: var(--text-3); }
 
 .btn {
   display: inline-flex;
@@ -316,10 +266,6 @@ body { overflow: hidden; }
 }
 .btn-ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
 .btn-ghost-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
-
-.check { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-2); cursor: pointer; }
-.check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
-.check input:disabled { cursor: not-allowed; }
 
 /* ---------- 通知 ---------- */
 .alert-area:empty { display: none; }
@@ -354,29 +300,6 @@ body { overflow: hidden; }
   cursor: pointer;
 }
 .alert-close:hover { background: rgba(128,128,128,.18); color: var(--text); }
-
-/* ---------- 使い方 ---------- */
-.howto {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-1);
-  font-size: 13px;
-}
-.howto summary {
-  padding: 10px 14px;
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--text-2);
-  list-style: none;
-}
-.howto summary::-webkit-details-marker { display: none; }
-.howto summary::before { content: "▸ "; color: var(--accent); }
-.howto[open] summary::before { content: "▾ "; }
-.howto-list { margin: 0; padding: 0 14px 4px 34px; color: var(--text-2); }
-.howto-list li { margin-bottom: 3px; }
-.howto-list b { color: var(--text); }
-.howto-note { padding: 4px 14px 12px; color: var(--text-3); font-size: 12.5px; }
 
 /* ---------- 会話表示 ---------- */
 .transcript-wrap {
@@ -530,17 +453,10 @@ body { overflow: hidden; }
 
 /* ---------- フッター ---------- */
 .app-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
   padding: 0 4px 4px;
   font-size: 11.5px;
   color: var(--text-3);
 }
-.app-footer .grow { flex: 1 1 auto; }
-.app-footer .sep { opacity: .5; }
-.foot-note { text-align: right; }
 
 /* ---------- トースト ---------- */
 .toast-area {
@@ -566,24 +482,16 @@ body { overflow: hidden; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ---------- レスポンシブ ---------- */
-@media (max-width: 900px) {
-  .statusbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 640px) {
   body { font-size: 13.5px; overflow: auto; }
   /* 狭い画面ではヘッダー類だけで画面が埋まりうるため、ページスクロールを許可し
      会話エリアには上限高さを与えて内部スクロールさせる */
   .app { padding: 10px 10px 8px; gap: 10px; height: auto; min-height: 100dvh; }
   .transcript-wrap { min-height: 260px; }
-  .scroll-area { max-height: 62vh; }
+  .scroll-area { max-height: 58vh; }
   .app-header { padding: 10px 12px; }
-  .header-right { width: 100%; justify-content: space-between; }
-  .statusbar { grid-template-columns: 1fr; }
-  .toolbar { flex-direction: column; align-items: stretch; }
-  .toolbar-main, .toolbar-sub { justify-content: space-between; }
-  .btn { flex: 1 1 auto; justify-content: center; }
+  .main-controls .btn { flex: 1 1 auto; justify-content: center; }
   .row { max-width: 92%; }
-  .foot-note { display: none; }
   .toast-area { left: 12px; right: 12px; align-items: center; }
 }
 

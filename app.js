@@ -2,7 +2,8 @@
  * TalkLog — リアルタイム会話文字起こし
  *
  * 設計方針
- *  - 「自分（マイク）」と「相手（画面共有音声）」で SpeechRecognition を完全分離する
+ *  - 「自分（マイク）」と「相手（PCのループバック入力）」で SpeechRecognition を完全分離する
+ *  - 画面共有・タブ共有は使わない。相手の声は「ステレオ ミキサー」等の録音デバイスから取る
  *  - 相手側は Chrome の SpeechRecognition.start(MediaStreamTrack) を機能検出して使用する
  *  - interimResults を有効にし、発話途中から画面へ反映する（同一発話は同じ要素を書き換え）
  *  - DOM への書き込みは requestAnimationFrame で 1 フレーム 1 回にまとめる
@@ -10,13 +11,12 @@
  *
  * 構成
  *  Support         : ブラウザ対応状況の判定
- *  AudioManager    : getUserMedia / getDisplayMedia とトラック管理・解放
- *  LevelMeter      : Web Audio API による入力レベル表示
+ *  AudioManager    : getUserMedia によるマイク／ループバック入力の取得と解放
  *  RecognitionEngine : SpeechRecognition 1 系統分のラッパ（自動再開・エラー方針を内包）
  *  TranscriptStore : 会話データ（構造化）の保持
  *  TranscriptView  : 会話の DOM 描画（差分更新・自動スクロール）
  *  StatusView / Alerts / Toast : 状態表示と通知
- *  Exporter        : コピー / TXT / CSV
+ *  Exporter        : コピー / TXT
  *  App             : 開始フローと全体のオーケストレーション
  * ========================================================================= */
 
@@ -30,6 +30,26 @@
 
   const SPEAKER = { SELF: 'self', REMOTE: 'remote' };
   const SPEAKER_LABEL = { self: '自分', remote: '相手' };
+
+  /** 認識言語（日本語専用） */
+  const LANG = 'ja-JP';
+
+  /**
+   * 「相手の声」を拾うループバック入力のデバイス名パターン。
+   * PC で再生中の音をそのまま録音できる入力だけを対象にする。
+   * （「ライン入力」等の外部入力は再生音を拾わないため含めない）
+   */
+  const LOOPBACK_LABEL_PATTERNS = [
+    /ステレオ\s*ミキサー/i,
+    /ステレオミックス/i,
+    /stereo\s*mix/i,
+    /what\s*u\s*hear/i,
+    /wave\s*out\s*mix/i,
+    /cable\s*output/i,      // VB-CABLE
+    /voicemeeter\s*out/i,   // VoiceMeeter
+    /loopback/i,
+    /ループバック/i,
+  ];
 
   /** UTF-8 BOM。日本語版 Excel / メモ帳での文字化けを防ぐために先頭へ付ける */
   const BOM = '\uFEFF';
@@ -141,8 +161,6 @@
     secure: window.isSecureContext === true,
     /** getUserMedia が使えるか */
     getUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
-    /** getDisplayMedia が使えるか */
-    getDisplayMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia),
     /** SpeechRecognition.start(MediaStreamTrack) が使えるか（遅延判定） */
     trackInput: null,
     /** オンデバイス認識が使えるか（遅延判定） */
@@ -224,21 +242,15 @@
 
   const dom = {
     // ヘッダー
-    selLang: $('sel-lang'),
     sessionBadge: $('session-badge'),
     sessionBadgeText: $('session-badge-text'),
     sessionTimer: $('session-timer'),
-    // 状態バー
+    // 入力状態
     pillMic: $('pill-mic'), pillMicValue: $('pill-mic-value'),
     pillPc: $('pill-pc'), pillPcValue: $('pill-pc-value'),
-    pillRecSelf: $('pill-rec-self'), pillRecSelfValue: $('pill-rec-self-value'),
-    pillRecRemote: $('pill-rec-remote'), pillRecRemoteValue: $('pill-rec-remote-value'),
-    meterSelf: $('meter-self'),
-    meterRemote: $('meter-remote'),
-    // ツールバー
+    // 操作
     btnStart: $('btn-start'), btnStop: $('btn-stop'),
-    btnCopy: $('btn-copy'), btnTxt: $('btn-txt'), btnCsv: $('btn-csv'), btnClear: $('btn-clear'),
-    chkRemote: $('chk-remote'),
+    btnCopy: $('btn-copy'), btnTxt: $('btn-txt'), btnClear: $('btn-clear'),
     // 表示
     alertArea: $('alert-area'),
     scrollArea: $('scroll-area'),
@@ -247,7 +259,7 @@
     emptyState: $('empty-state'),
     trimNotice: $('trim-notice'),
     btnJump: $('btn-jump'), jumpCount: $('jump-count'),
-    statCount: $('stat-count'), statEngine: $('stat-engine'),
+    statCount: $('stat-count'),
     toastArea: $('toast-area'),
   };
 
@@ -343,8 +355,6 @@
     },
     mic(state, text) { this._set(dom.pillMic, dom.pillMicValue, state, text); },
     pc(state, text) { this._set(dom.pillPc, dom.pillPcValue, state, text); },
-    recSelf(state, text) { this._set(dom.pillRecSelf, dom.pillRecSelfValue, state, text); },
-    recRemote(state, text) { this._set(dom.pillRecRemote, dom.pillRecRemoteValue, state, text); },
 
     /** @param {'idle'|'starting'|'running'} phase */
     session(phase, text) {
@@ -355,25 +365,24 @@
 
     timer(ms) { dom.sessionTimer.textContent = formatDuration(ms); },
 
-    engine(text) { dom.statEngine.textContent = `エンジン: ${text}`; },
-
     /** すべて初期状態へ戻す */
     reset() {
       this.mic('off', '未接続');
       this.pc('off', '未接続');
-      this.recSelf('off', '停止中');
-      this.recRemote('off', '停止中');
       this.session('idle', '待機中');
     },
   };
 
-  /** 認識エンジンの状態 → 表示テキスト／色 */
+  /**
+   * 認識エンジンの状態 → 入力状態の表示。
+   * 入力表示は 1 行に集約したので、認識が動いているかもここで表す。
+   */
   const REC_STATE_VIEW = {
-    idle:        ['off', '停止中'],
-    starting:    ['warn', '準備中'],
-    listening:   ['ok', '動作中'],
+    idle:        ['ok', '接続済み'],
+    starting:    ['ok', '接続済み'],
+    listening:   ['ok', '使用中'],
     restarting:  ['warn', '再接続中'],
-    stopped:     ['off', '停止中'],
+    stopped:     ['off', '停止'],
     error:       ['error', 'エラー'],
     unsupported: ['warn', '非対応'],
   };
@@ -384,7 +393,7 @@
 
   const AudioManager = {
     /** @type {MediaStream|null} */ micStream: null,
-    /** @type {MediaStream|null} */ displayStream: null,
+    /** @type {MediaStream|null} */ loopbackStream: null,
 
     /**
      * マイクを取得する。音声認識の品質を優先し、既定の音声処理は有効のまま使う。
@@ -408,143 +417,71 @@
     },
 
     /**
-     * 画面／タブ共有を取得する。新しい Chrome のオプションを優先し、
-     * 未対応環境では最小構成へフォールバックする。
-     * @returns {Promise<MediaStream>}
+     * PC で再生されている音（＝相手の声）を拾うループバック入力を探す。
+     * Windows の「ステレオ ミキサー」や仮想オーディオケーブルが該当する。
+     * 画面共有ダイアログを出さずに 2 本目の入力を得るための手段。
+     *
+     * ラベルはマイク許可後でないと空文字になるため、必ず
+     * acquireMicrophone() の後に呼ぶこと。
+     * @returns {Promise<MediaDeviceInfo|null>}
      */
-    async acquireDisplay() {
-      if (!Support.getDisplayMedia) {
-        throw new Error('この環境では画面共有 (getDisplayMedia) が利用できません。');
+    async findLoopbackDevice() {
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.enumerateDevices !== 'function') {
+        return null;
+      }
+      let devices;
+      try {
+        devices = await navigator.mediaDevices.enumerateDevices();
+      } catch (err) {
+        console.warn('[TalkLog] 入力デバイスを列挙できませんでした:', err);
+        return null;
       }
 
-      // 音声認識に回すため、音声加工は極力オフにして原音に近づける
-      const modern = {
-        video: { frameRate: { ideal: 5, max: 10 } }, // 映像は使わないので負荷を最小化
+      const micId = this.micStream && this.micStream.getAudioTracks()[0]
+        ? this.micStream.getAudioTracks()[0].getSettings().deviceId
+        : null;
+
+      return devices.find((d) =>
+        d.kind === 'audioinput' &&
+        d.deviceId !== micId &&
+        LOOPBACK_LABEL_PATTERNS.some((re) => re.test(d.label))
+      ) || null;
+    },
+
+    /**
+     * ループバック入力を取得する。
+     * 音声認識へ回すため、加工（エコーキャンセル等）はすべて切って原音に近づける。
+     * @param {string} deviceId
+     * @returns {Promise<MediaStream>}
+     */
+    async acquireLoopback(deviceId) {
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          deviceId: { exact: deviceId },
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
         },
-        systemAudio: 'include',        // 画面全体共有時にシステム音声を候補に含める
-        selfBrowserSurface: 'exclude', // 自分自身のタブを共有候補から外す（音の回り込み防止）
-        surfaceSwitching: 'include',   // 共有対象の切り替えを許可
-        monitorTypeSurfaces: 'include',
-      };
-
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getDisplayMedia(modern);
-      } catch (err) {
-        // オプション自体が理解されない古い実装の場合のみ、最小構成で再試行する
-        if (err && (err.name === 'TypeError' || err.name === 'NotSupportedError')) {
-          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        } else {
-          throw err;
-        }
-      }
-
-      this.displayStream = stream;
+        video: false,
+      });
+      this.loopbackStream = stream;
       return stream;
     },
 
     /** すべてのストリームを解放する */
     releaseAll() {
       stopStream(this.micStream);
-      stopStream(this.displayStream);
+      stopStream(this.loopbackStream);
       this.micStream = null;
-      this.displayStream = null;
+      this.loopbackStream = null;
     },
 
-    releaseDisplay() {
-      stopStream(this.displayStream);
-      this.displayStream = null;
-    },
-  };
-
-  /* =======================================================================
-   * LevelMeter — 入力レベル表示（Web Audio API）
-   * ===================================================================== */
-
-  const LevelMeter = {
-    /** @type {AudioContext|null} */ ctx: null,
-    /** @type {Array<{analyser:AnalyserNode, source:MediaStreamAudioSourceNode, el:HTMLElement, buf:Uint8Array, last:number}>} */
-    channels: [],
-    rafId: 0,
-
-    /**
-     * ストリームを監視対象に追加する。
-     * 失敗しても文字起こし本体には影響させない（メーターは補助機能）。
-     */
-    attach(stream, barEl) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC || !stream || stream.getAudioTracks().length === 0) return;
-
-      try {
-        if (!this.ctx) this.ctx = new AC();
-        if (this.ctx.state === 'suspended') { this.ctx.resume().catch(() => {}); }
-
-        const source = this.ctx.createMediaStreamSource(stream);
-        const analyser = this.ctx.createAnalyser();
-        analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.5;
-        source.connect(analyser); // 出力へは接続しない（ハウリング防止）
-
-        this.channels.push({
-          analyser,
-          source,
-          el: barEl,
-          buf: new Uint8Array(analyser.fftSize),
-          last: -1,
-        });
-        this._start();
-      } catch (err) {
-        console.warn('[TalkLog] レベルメーターを初期化できませんでした:', err);
-      }
-    },
-
-    _start() {
-      if (this.rafId !== 0) return;
-      const tick = () => {
-        this.rafId = window.requestAnimationFrame(tick);
-        for (const ch of this.channels) {
-          ch.analyser.getByteTimeDomainData(ch.buf);
-          // RMS を求めて 0-100% に写像する（128 が無音の中心値）
-          let sum = 0;
-          for (let i = 0; i < ch.buf.length; i++) {
-            const v = (ch.buf[i] - 128) / 128;
-            sum += v * v;
-          }
-          const rms = Math.sqrt(sum / ch.buf.length);
-          const pct = Math.min(100, Math.round(rms * 320));
-          // 変化が小さいときは DOM を触らない
-          if (Math.abs(pct - ch.last) >= CFG.METER_MIN_DELTA) {
-            ch.el.style.width = `${pct}%`;
-            ch.last = pct;
-          }
-        }
-      };
-      this.rafId = window.requestAnimationFrame(tick);
-    },
-
-    /** すべて解放し、AudioContext も閉じる */
-    release() {
-      if (this.rafId !== 0) {
-        window.cancelAnimationFrame(this.rafId);
-        this.rafId = 0;
-      }
-      for (const ch of this.channels) {
-        try { ch.source.disconnect(); } catch (_) { /* noop */ }
-        try { ch.analyser.disconnect(); } catch (_) { /* noop */ }
-        ch.el.style.width = '0%';
-      }
-      this.channels = [];
-      if (this.ctx) {
-        const ctx = this.ctx;
-        this.ctx = null;
-        ctx.close().catch(() => {});
-      }
+    releaseLoopback() {
+      stopStream(this.loopbackStream);
+      this.loopbackStream = null;
     },
   };
+
 
   /* =======================================================================
    * RecognitionEngine — SpeechRecognition 1 系統分のラッパ
@@ -684,7 +621,7 @@
         return;
       }
 
-      // 入力トラックが終了している（画面共有停止など）なら再開しない
+      // 入力トラックが終了している（デバイス切断など）なら再開しない
       if (this.track && this.track.readyState === 'ended') {
         this.enabled = false;
         this._setState('stopped');
@@ -708,7 +645,6 @@
         this.processLocally = false;
         this._disposeRecognition();
         Support.onDevice = false;
-        StatusView.engine('ブラウザ標準（オンデバイス無効）');
         this._scheduleRestart(CFG.RESTART_BASE_DELAY_MS);
         return;
       }
@@ -855,18 +791,6 @@
       return header + body + '\n';
     },
 
-    /** CSV 表現（Excel 互換のため CRLF 改行） */
-    toCsv() {
-      const cell = (value) => {
-        const s = String(value == null ? '' : value);
-        return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      };
-      const rows = [['timestamp', 'speaker', 'text']];
-      for (const e of this.entries) {
-        rows.push([formatStamp(e.timestamp), SPEAKER_LABEL[e.speaker], e.text]);
-      }
-      return rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
-    },
   };
 
   /* =======================================================================
@@ -1121,16 +1045,6 @@
       Toast.show('TXT を保存しました');
     },
 
-    downloadCsv() {
-      if (TranscriptStore.count === 0) { Toast.show('保存する会話がありません'); return; }
-      // 日本語版 Excel でそのまま開けるよう UTF-8 BOM 付き
-      this._download(
-        new Blob([BOM + TranscriptStore.toCsv()], { type: 'text/csv;charset=utf-8' }),
-        `talklog-${formatFileStamp(Date.now())}.csv`
-      );
-      Toast.show('CSV を保存しました');
-    },
-
     _download(blob, filename) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1175,7 +1089,7 @@
       if (!Support.secure) {
         dom.btnStart.disabled = true;
         Alerts.show('env-secure', 'error', 'HTTPS または localhost で開いてください',
-          'マイクと画面共有の取得にはセキュアな接続が必要です。https:// のURL、もしくは http://localhost でアクセスしてください。');
+          'マイクの使用にはセキュアな接続が必要です。https:// のURL、もしくは http://localhost でアクセスしてください。');
         return;
       }
       if (!Support.SR) {
@@ -1184,15 +1098,16 @@
           'Windows 11 + Google Chrome 最新版でご利用ください。（Web Speech API 対応が必要です）');
         return;
       }
-      if (!Support.getUserMedia || !Support.getDisplayMedia) {
-        Alerts.show('env-media', 'warn', 'メディア取得 API の一部が利用できません',
+      if (!Support.getUserMedia) {
+        dom.btnStart.disabled = true;
+        Alerts.show('env-media', 'error', 'この環境ではマイクを取得できません',
           'Google Chrome 最新版のご利用を推奨します。');
+        return;
       }
       if (!Support.chromium) {
         Alerts.show('env-browser', 'warn', 'Google Chrome 最新版を推奨します',
-          '現在のブラウザでは相手側（画面共有音声）の文字起こしが動作しない可能性があります。');
+          '現在のブラウザでは相手の発言の文字起こしが動作しない可能性があります。');
       }
-      StatusView.engine('ブラウザ標準（未接続）');
     },
 
     /* ---------- UI イベント（各要素につき 1 度だけ登録） ---------- */
@@ -1202,7 +1117,6 @@
       dom.btnStop.addEventListener('click', () => { this.stop('user'); });
       dom.btnCopy.addEventListener('click', () => { Exporter.copyAll(); });
       dom.btnTxt.addEventListener('click', () => { Exporter.downloadTxt(); });
-      dom.btnCsv.addEventListener('click', () => { Exporter.downloadCsv(); });
       dom.btnClear.addEventListener('click', () => { this.clearLog(); });
 
       // 終了時のリソース解放（ページ離脱でストリームが残らないように）
@@ -1223,8 +1137,6 @@
 
       dom.btnStart.disabled = busy;
       dom.btnStop.disabled = !running;
-      dom.selLang.disabled = busy;
-      dom.chkRemote.disabled = busy;
 
       if (phase === 'idle') StatusView.session('idle', '待機中');
       else if (phase === 'starting') StatusView.session('starting', '準備中…');
@@ -1239,8 +1151,7 @@
       Alerts.clearAll();
       this._setPhase('starting');
 
-      const useRemote = dom.chkRemote.checked;
-      const lang = dom.selLang.value;
+      const lang = LANG;
 
       try {
         /* ---- STEP 1: マイク取得 ---- */
@@ -1259,75 +1170,53 @@
             'PC にマイクが接続されているか確認してください。');
           throw new Error('__handled__');
         }
-        StatusView.mic('ok', '接続中');
+        StatusView.mic('ok', '接続済み');
         // デバイスが外れた場合に検知する
         this.micTrack.addEventListener('ended', () => this._onMicEnded());
 
         /* ---- 機能検出（マイク許可後に一度だけ実施する） ---- */
         Support.detectTrackInput();
         await Support.detectOnDevice(lang);
-        StatusView.engine(
-          `${Support.onDevice ? 'オンデバイス' : 'ブラウザ標準'} / ` +
-          `トラック入力: ${Support.trackInput ? '対応' : '非対応'}`
-        );
 
-        /* ---- STEP 2 & 3: 画面共有と音声トラック確認 ---- */
-        if (useRemote) {
-          StatusView.pc('warn', '選択待ち…');
-          let displayStream;
+        /* ---- STEP 2: 相手音声（ループバック入力）の取得 ----
+           取得できなくても自分側の文字起こしは続行する（開始は中断しない）。 */
+        const device = await AudioManager.findLoopbackDevice();
+        if (!device) {
+          StatusView.pc('warn', '利用不可');
+          Alerts.show('pc', 'warn', '相手の声を取り込む入力が見つかりませんでした',
+            'このPCで「ステレオ ミキサー」などの録音デバイスが無効になっている可能性があります。\n' +
+            'Windows の「サウンドの設定」→「サウンドの詳細設定」→「録音」タブで、ステレオ ミキサーを有効にすると相手の発言も文字起こしできます。\n' +
+            '（現在は自分の発言のみ文字起こししています）');
+        } else if (!Support.trackInput) {
+          // 音声は取得できるが、このブラウザでは認識へ流し込めない
+          StatusView.pc('warn', '非対応');
+          Alerts.show('pc', 'warn', 'このブラウザでは相手の発言を文字起こしできません',
+            'お使いのブラウザは音声認識への音声トラック指定に対応していません。\n' +
+            'Google Chrome を最新版に更新してください。\n' +
+            '（現在は自分の発言のみ文字起こししています）');
+        } else {
           try {
-            displayStream = await AudioManager.acquireDisplay();
+            const loopStream = await AudioManager.acquireLoopback(device.deviceId);
+            this.remoteTrack = loopStream.getAudioTracks()[0] || null;
+            if (this.remoteTrack) {
+              StatusView.pc('ok', '接続済み');
+              // デバイスが無効化された場合に検知する
+              this.remoteTrack.addEventListener('ended', () => this._onRemoteTrackEnded());
+            } else {
+              StatusView.pc('warn', '利用不可');
+            }
           } catch (err) {
-            this._handleDisplayError(err);
-            throw new Error('__handled__');
+            console.warn('[TalkLog] 相手音声の入力を取得できませんでした:', err);
+            StatusView.pc('warn', '利用不可');
+            Alerts.show('pc', 'warn', '相手の声を取り込む入力を開けませんでした',
+              '他のアプリが使用中か、デバイスが無効になっている可能性があります。\n' +
+              '（現在は自分の発言のみ文字起こししています）');
           }
-
-          const audioTracks = displayStream.getAudioTracks();
-          if (audioTracks.length === 0) {
-            // 音声なしで共有された場合は開始せず、原因を明示して中断する
-            AudioManager.releaseDisplay();
-            StatusView.pc('error', '音声なし');
-            Alerts.show('pc-audio', 'error', '共有した画面・タブの音声が取得できませんでした',
-              'Chrome の共有ダイアログで「タブの音声を共有」または「システム音声を共有」を ON にして、もう一度お試しください。\n' +
-              '※ Windows では「ウィンドウ」を選ぶと音声を共有できません。「Chrome のタブ」または「画面全体」を選択してください。');
-            throw new Error('__handled__');
-          }
-
-          this.remoteTrack = audioTracks[0];
-          StatusView.pc('ok', '接続中');
-          // 共有停止（Chrome の「共有を停止」バー）を検知する
-          this.remoteTrack.addEventListener('ended', () => this._onRemoteTrackEnded());
-          // 映像トラック側の終了でも共有停止を検知できるようにしておく
-          const videoTrack = displayStream.getVideoTracks()[0];
-          if (videoTrack) videoTrack.addEventListener('ended', () => this._onRemoteTrackEnded());
-        } else {
-          StatusView.pc('off', '未使用');
         }
 
-        /* ---- レベルメーター ---- */
-        LevelMeter.attach(AudioManager.micStream, dom.meterSelf);
-        if (AudioManager.displayStream) {
-          LevelMeter.attach(AudioManager.displayStream, dom.meterRemote);
-        }
-
-        /* ---- STEP 4: 音声認識の開始（自分・相手を完全に分離） ---- */
+        /* ---- STEP 3: 音声認識の開始（自分・相手を完全に分離） ---- */
         this._startSelfEngine(lang);
-
-        if (useRemote && this.remoteTrack) {
-          if (Support.trackInput) {
-            this._startRemoteEngine(lang);
-          } else {
-            // 音声は取得できているが、この Chrome では認識へ流し込めない
-            StatusView.recRemote('warn', '非対応');
-            Alerts.show('remote-unsupported', 'warn',
-              'このブラウザでは相手側の文字起こしができません',
-              'お使いのブラウザは音声認識への音声トラック入力（SpeechRecognition のトラック指定）に対応していません。\n' +
-              'Google Chrome を最新版に更新してください。\n' +
-              '（音声自体は取得できているため、PC音声のレベルメーターは動作します）');
-          }
-        } else {
-          StatusView.recRemote('off', '未使用');
-        }
+        if (this.remoteTrack) this._startRemoteEngine(lang);
 
         this._setPhase('running');
         this._startTimer();
@@ -1352,13 +1241,11 @@
         onFinal: (text) => this._commit(SPEAKER.SELF, text),
         onState: (state) => {
           const [kind, label] = REC_STATE_VIEW[state] || ['off', state];
-          StatusView.recSelf(kind, label);
+          StatusView.mic(kind, label);
         },
         onFatal: (reason, message) => {
           Alerts.show('rec-self', 'error', '自分側の文字起こしが停止しました', message);
-          if (reason === 'not-allowed' || reason === 'audio-capture') {
-            StatusView.mic('error', 'エラー');
-          }
+          StatusView.mic('error', 'エラー');
         },
       });
       this.selfEngine.setLang(lang);
@@ -1375,10 +1262,10 @@
         onFinal: (text) => this._commit(SPEAKER.REMOTE, text),
         onState: (state) => {
           const [kind, label] = REC_STATE_VIEW[state] || ['off', state];
-          StatusView.recRemote(kind, label);
+          StatusView.pc(kind, label);
         },
         onFatal: (reason, message) => {
-          if (reason === 'track-ended') return; // 共有停止時は別途案内する
+          if (reason === 'track-ended') return; // 入力終了時は別途案内する
           Alerts.show('rec-remote', 'error', '相手側の文字起こしが停止しました', message);
         },
       });
@@ -1409,23 +1296,6 @@
       }
     },
 
-    _handleDisplayError(err) {
-      const name = err && err.name ? err.name : '';
-      StatusView.pc('error', name === 'NotAllowedError' ? 'キャンセル' : '取得失敗');
-
-      if (name === 'NotAllowedError') {
-        Alerts.show('pc', 'warn', '画面共有がキャンセルされました',
-          '相手の音声を文字起こしするには、画面共有と「音声を共有」の ON が必要です。\n' +
-          '自分の声だけを記録する場合は「相手の音声（画面共有）も文字起こし」のチェックを外して開始してください。');
-      } else if (name === 'NotFoundError') {
-        Alerts.show('pc', 'error', '共有できる画面が見つかりませんでした',
-          'もう一度お試しください。');
-      } else {
-        Alerts.show('pc', 'error', '画面共有を開始できませんでした',
-          (err && err.message) ? err.message : String(err));
-      }
-    },
-
     /* ---------- トラック終了の検知 ---------- */
 
     _onRemoteTrackEnded() {
@@ -1437,13 +1307,11 @@
         this.remoteEngine.stop();
         this.remoteEngine = null;
       }
-      AudioManager.releaseDisplay();
-      dom.meterRemote.style.width = '0%';
+      AudioManager.releaseLoopback();
 
-      StatusView.pc('warn', '共有停止');
-      StatusView.recRemote('off', '停止中');
+      StatusView.pc('warn', '切断');
       TranscriptView.setInterim(SPEAKER.REMOTE, '');
-      Alerts.show('pc', 'warn', '画面共有が停止しました',
+      Alerts.show('pc', 'warn', '相手音声の入力が切断されました',
         '相手側の文字起こしのみ停止しました。自分側の文字起こしは継続しています。');
     },
 
@@ -1455,7 +1323,7 @@
         this.selfEngine = null;
       }
       StatusView.mic('error', '切断');
-      StatusView.recSelf('off', '停止中');
+      TranscriptView.setInterim(SPEAKER.SELF, '');
       Alerts.show('mic', 'error', 'マイクが切断されました',
         'マイクが取り外されたか、他のアプリに奪われた可能性があります。');
     },
@@ -1495,11 +1363,6 @@
       this._teardown();
       this._setPhase('idle');
       StatusView.reset();
-      StatusView.engine(
-        Support.trackInput === null
-          ? 'ブラウザ標準（未接続）'
-          : `${Support.onDevice ? 'オンデバイス' : 'ブラウザ標準'} / トラック入力: ${Support.trackInput ? '対応' : '非対応'}`
-      );
       if (reason === 'user') Toast.show('文字起こしを停止しました');
     },
 
@@ -1511,13 +1374,10 @@
       if (this.remoteEngine) { this.remoteEngine.stop(); this.remoteEngine = null; }
 
       TranscriptView.clearLive();
-      LevelMeter.release();
       AudioManager.releaseAll();
 
       this.micTrack = null;
       this.remoteTrack = null;
-      dom.meterSelf.style.width = '0%';
-      dom.meterRemote.style.width = '0%';
     },
 
     /* ---------- ログのクリア ---------- */
