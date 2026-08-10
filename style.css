@@ -223,6 +223,20 @@ body { overflow: hidden; }
 .stat[data-state="warn"] b  { color: var(--warn); }
 .stat[data-state="error"] b { color: var(--danger); }
 
+.mic-select {
+  max-width: 260px;
+  padding: 3px 8px;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+.mic-select:disabled { opacity: .55; cursor: not-allowed; }
+.mic-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* ---------- 操作 ---------- */
 .main-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sub-controls {

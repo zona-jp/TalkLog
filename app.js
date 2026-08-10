@@ -2,8 +2,8 @@
  * TalkLog — リアルタイム会話文字起こし
  *
  * 設計方針
- *  - 「自分（マイク）」と「相手（PCのループバック入力）」で SpeechRecognition を完全分離する
- *  - 画面共有・タブ共有は使わない。相手の声は「ステレオ ミキサー」等の録音デバイスから取る
+ *  - 「自分（マイク）」と「相手（タブ／画面の共有音声）」で SpeechRecognition を完全分離する
+ *  - ブラウザは PC 内部の再生音へ直接触れないため、相手の声は音声共有を経由して取る
  *  - 相手側は Chrome の SpeechRecognition.start(MediaStreamTrack) を機能検出して使用する
  *  - interimResults を有効にし、発話途中から画面へ反映する（同一発話は同じ要素を書き換え）
  *  - DOM への書き込みは requestAnimationFrame で 1 フレーム 1 回にまとめる
@@ -11,7 +11,7 @@
  *
  * 構成
  *  Support         : ブラウザ対応状況の判定
- *  AudioManager    : getUserMedia によるマイク／ループバック入力の取得と解放
+ *  AudioManager    : マイク（getUserMedia）と共有音声（getDisplayMedia）の取得と解放
  *  RecognitionEngine : SpeechRecognition 1 系統分のラッパ（自動再開・エラー方針を内包）
  *  TranscriptStore : 会話データ（構造化）の保持
  *  TranscriptView  : 会話の DOM 描画（差分更新・自動スクロール）
@@ -34,22 +34,8 @@
   /** 認識言語（日本語専用） */
   const LANG = 'ja-JP';
 
-  /**
-   * 「相手の声」を拾うループバック入力のデバイス名パターン。
-   * PC で再生中の音をそのまま録音できる入力だけを対象にする。
-   * （「ライン入力」等の外部入力は再生音を拾わないため含めない）
-   */
-  const LOOPBACK_LABEL_PATTERNS = [
-    /ステレオ\s*ミキサー/i,
-    /ステレオミックス/i,
-    /stereo\s*mix/i,
-    /what\s*u\s*hear/i,
-    /wave\s*out\s*mix/i,
-    /cable\s*output/i,      // VB-CABLE
-    /voicemeeter\s*out/i,   // VoiceMeeter
-    /loopback/i,
-    /ループバック/i,
-  ];
+  /** 選択したマイクを覚えておくキー */
+  const MIC_STORAGE_KEY = 'talklog.micDeviceId';
 
   /** UTF-8 BOM。日本語版 Excel / メモ帳での文字化けを防ぐために先頭へ付ける */
   const BOM = '\uFEFF';
@@ -265,6 +251,7 @@
     sessionTimer: $('session-timer'),
     // 入力状態
     pillMic: $('pill-mic'), pillMicValue: $('pill-mic-value'),
+    selMic: $('sel-mic'),
     pillPc: $('pill-pc'), pillPcValue: $('pill-pc-value'),
     // 操作
     btnStart: $('btn-start'), btnStop: $('btn-stop'),
@@ -444,99 +431,92 @@
 
   const AudioManager = {
     /** @type {MediaStream|null} */ micStream: null,
-    /** @type {MediaStream|null} */ loopbackStream: null,
+    /** @type {MediaStream|null} */ shareStream: null,
 
     /**
      * マイクを取得する。音声認識の品質を優先し、既定の音声処理は有効のまま使う。
+     * @param {string} [deviceId] 指定があればそのマイクを使う（未指定なら既定）
      * @returns {Promise<MediaStream>}
      */
-    async acquireMicrophone() {
+    async acquireMicrophone(deviceId) {
       if (!Support.getUserMedia) {
         throw new Error('この環境ではマイク取得 (getUserMedia) が利用できません。');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,   // スピーカー再生の回り込みを抑える
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-        video: false,
-      });
+      const audio = {
+        echoCancellation: true,   // スピーカー再生の回り込みを抑える
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      };
+      // 指定デバイスが使えない場合に開始ごと失敗しないよう ideal で指定する
+      if (deviceId) audio.deviceId = { ideal: deviceId };
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
       this.micStream = stream;
       return stream;
     },
 
-    /**
-     * PC で再生されている音（＝相手の声）を拾うループバック入力を探す。
-     * Windows の「ステレオ ミキサー」や仮想オーディオケーブルが該当する。
-     * 画面共有ダイアログを出さずに 2 本目の入力を得るための手段。
-     *
-     * ラベルはマイク許可後でないと空文字になるため、必ず
-     * acquireMicrophone() の後に呼ぶこと。
-     * @returns {Promise<MediaDeviceInfo|null>}
-     */
-    async findLoopbackDevice() {
+    /** 選択できるマイクの一覧（ラベルはマイク許可後に埋まる） */
+    async listMicrophones() {
       if (!navigator.mediaDevices || typeof navigator.mediaDevices.enumerateDevices !== 'function') {
-        return null;
+        return [];
       }
-      let devices;
       try {
-        devices = await navigator.mediaDevices.enumerateDevices();
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        return devices.filter((d) => d.kind === 'audioinput' && d.deviceId);
       } catch (err) {
-        console.warn('[TalkLog] 入力デバイスを列挙できませんでした:', err);
-        return null;
+        console.warn('[TalkLog] マイク一覧を取得できませんでした:', err);
+        return [];
       }
-
-      const micId = this.micStream && this.micStream.getAudioTracks()[0]
-        ? this.micStream.getAudioTracks()[0].getSettings().deviceId
-        : null;
-
-      const inputs = devices.filter((d) => d.kind === 'audioinput');
-      const found = inputs.find((d) =>
-        d.deviceId !== micId &&
-        LOOPBACK_LABEL_PATTERNS.some((re) => re.test(d.label))
-      ) || null;
-
-      // 見つからない原因を追えるよう、Chrome が実際に返した入力一覧を残す
-      if (!found) {
-        console.info('[TalkLog] 検出された音声入力デバイス:',
-          inputs.map((d) => `${d.label || '(ラベルなし)'} [${d.deviceId.slice(0, 8)}]`));
-      }
-      return found;
     },
 
     /**
-     * ループバック入力を取得する。
-     * 音声認識へ回すため、加工（エコーキャンセル等）はすべて切って原音に近づける。
-     * @param {string} deviceId
+     * 相手の声を取得する。
+     *
+     * ブラウザはセキュリティ上 PC 内部の再生音へ直接アクセスできないため、
+     * タブ／画面の音声共有を経由するしかない。環境に依存せず確実に動く唯一の方法。
+     * 利用者の操作（開始ボタン）直後に呼ぶこと（画面共有には操作起点が必要）。
+     *
+     * 音声認識へ回すため、加工（エコーキャンセル等）は切って原音に近づける。
      * @returns {Promise<MediaStream>}
      */
-    async acquireLoopback(deviceId) {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: { exact: deviceId },
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-        video: false,
-      });
-      this.loopbackStream = stream;
+    async acquireShareAudio() {
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+        throw new Error('この環境では画面共有を利用できません。');
+      }
+      const options = {
+        video: { frameRate: { ideal: 5, max: 10 } }, // 映像は使わないので負荷を最小化
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        systemAudio: 'include',        // 画面全体共有時にシステム音声を候補に含める
+        selfBrowserSurface: 'exclude', // 自分のタブを候補から外す（音の回り込み防止）
+        monitorTypeSurfaces: 'include',
+      };
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia(options);
+      } catch (err) {
+        // オプションを解釈できない古い実装のときだけ最小構成で再試行する
+        if (err && (err.name === 'TypeError' || err.name === 'NotSupportedError')) {
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        } else {
+          throw err;
+        }
+      }
+      this.shareStream = stream;
       return stream;
     },
 
     /** すべてのストリームを解放する */
     releaseAll() {
       stopStream(this.micStream);
-      stopStream(this.loopbackStream);
+      stopStream(this.shareStream);
       this.micStream = null;
-      this.loopbackStream = null;
+      this.shareStream = null;
     },
 
-    releaseLoopback() {
-      stopStream(this.loopbackStream);
-      this.loopbackStream = null;
+    releaseShare() {
+      stopStream(this.shareStream);
+      this.shareStream = null;
     },
   };
 
@@ -1177,6 +1157,52 @@
       this._bindUi();
       this._checkEnvironment();
       this._updateCount();
+      // 既に許可済みならこの時点で実名が並ぶ。未許可なら「既定のマイク」のみ
+      this._refreshMicList();
+    },
+
+    /* ---------- マイク選択 ---------- */
+
+    /** 前回選んだマイクを読み出す */
+    _loadMicChoice() {
+      try { return window.localStorage.getItem(MIC_STORAGE_KEY) || ''; }
+      catch (_) { return ''; }   // プライベートモード等で localStorage が使えない場合
+    },
+
+    _saveMicChoice(deviceId) {
+      try {
+        if (deviceId) window.localStorage.setItem(MIC_STORAGE_KEY, deviceId);
+        else window.localStorage.removeItem(MIC_STORAGE_KEY);
+      } catch (_) { /* 保存できなくても動作に支障はない */ }
+    },
+
+    /**
+     * マイク一覧をセレクトボックスへ反映する。
+     * デバイス名はマイク許可後でないと空になるため、許可取得後にも呼び直す。
+     */
+    async _refreshMicList() {
+      const devices = await AudioManager.listMicrophones();
+      const wanted = dom.selMic.value || this._loadMicChoice();
+
+      dom.selMic.replaceChildren();
+
+      const defaultOption = document.createElement('option');
+      defaultOption.value = '';
+      defaultOption.textContent = '既定のマイク';
+      dom.selMic.appendChild(defaultOption);
+
+      for (const d of devices) {
+        // 「既定 -」「通信 -」は Chrome が付ける別名。実体は下の個別デバイスと同じ
+        if (d.deviceId === 'default' || d.deviceId === 'communications') continue;
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || 'マイク';
+        dom.selMic.appendChild(opt);
+      }
+
+      // 保存済みの選択が今も存在すれば復元する
+      const exists = Array.from(dom.selMic.options).some((o) => o.value === wanted);
+      dom.selMic.value = exists ? wanted : '';
     },
 
     /* ---------- 起動時チェック ---------- */
@@ -1214,6 +1240,12 @@
       dom.btnCopy.addEventListener('click', () => { Exporter.copyAll(); });
       dom.btnTxt.addEventListener('click', () => { Exporter.downloadTxt(); });
       dom.btnClear.addEventListener('click', () => { this.clearLog(); });
+      dom.selMic.addEventListener('change', () => { this._saveMicChoice(dom.selMic.value); });
+
+      // マイクの抜き差しに追従する
+      if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
+        navigator.mediaDevices.addEventListener('devicechange', () => { this._refreshMicList(); });
+      }
 
       // 終了時のリソース解放（ページ離脱でストリームが残らないように）
       window.addEventListener('pagehide', () => { this._teardown(); }, { once: true });
@@ -1233,6 +1265,7 @@
 
       dom.btnStart.disabled = busy;
       dom.btnStop.disabled = !running;
+      dom.selMic.disabled = busy;   // 動作中の切り替えは混乱のもとなので止めてから
 
       if (phase === 'idle') StatusView.session('idle', '待機中');
       else if (phase === 'starting') StatusView.session('starting', '準備中…');
@@ -1254,7 +1287,7 @@
         StatusView.mic('warn', '要求中…');
         let micStream;
         try {
-          micStream = await AudioManager.acquireMicrophone();
+          micStream = await AudioManager.acquireMicrophone(dom.selMic.value);
         } catch (err) {
           this._handleMicError(err);
           throw new Error('__handled__');
@@ -1269,43 +1302,28 @@
         StatusView.mic('ok', '接続済み');
         // デバイスが外れた場合に検知する
         this.micTrack.addEventListener('ended', () => this._onMicEnded());
+        // 許可が下りたのでデバイス名が読めるようになる。一覧を実名へ更新する
+        this._refreshMicList();
 
-        /* ---- 機能検出（マイク許可後に一度だけ実施する） ---- */
+        /* ---- STEP 2: 相手音声（タブ／画面の音声共有）の取得 ----
+           画面共有は「利用者の操作直後」でないと呼べないため、マイク取得の直後に行う。
+           取得できなくても自分側は続行する（開始は中断しない）。 */
+        StatusView.pc('warn', '選択待ち…');
+        await this._acquireRemoteAudio();
+
+        /* ---- 機能検出（共有取得のあと。ここで待つと操作起点が切れるため後回し） ---- */
         await Support.detectTrackInput();
         await Support.detectOnDevice(lang);
 
-        /* ---- STEP 2: 相手音声（ループバック入力）の取得 ----
-           取得できなくても自分側の文字起こしは続行する（開始は中断しない）。 */
-        const device = await AudioManager.findLoopbackDevice();
-        if (!device) {
-          StatusView.pc('warn', '利用不可');
-          Alerts.show('pc', 'warn', '相手の声を取り込む入力が見つかりませんでした',
-            'このPCで「ステレオ ミキサー」などの録音デバイスが Chrome から見えていません。\n' +
-            '（現在は自分の発言のみ文字起こししています）');
-        } else if (!Support.trackInput) {
-          // 音声は取得できるが、このブラウザでは認識へ流し込めない
+        if (this.remoteTrack && !Support.trackInput) {
+          // 音声は取得できたが、このブラウザでは認識へ流し込めない
+          this.remoteTrack = null;
+          AudioManager.releaseShare();
           StatusView.pc('warn', '非対応');
           Alerts.show('pc', 'warn', 'このブラウザでは相手の発言を文字起こしできません',
             'お使いのブラウザは音声認識への音声トラック指定に対応していません。\n' +
             'Google Chrome を最新版に更新してください。\n' +
             '（現在は自分の発言のみ文字起こししています）');
-        } else {
-          try {
-            const loopStream = await AudioManager.acquireLoopback(device.deviceId);
-            this.remoteTrack = loopStream.getAudioTracks()[0] || null;
-            if (this.remoteTrack) {
-              StatusView.pc('ok', '接続済み');
-              // デバイスが無効化された場合に検知する
-              this.remoteTrack.addEventListener('ended', () => this._onRemoteTrackEnded());
-            } else {
-              StatusView.pc('warn', '利用不可');
-            }
-          } catch (err) {
-            console.warn('[TalkLog] 相手音声の入力を取得できませんでした:', err);
-            StatusView.pc('warn', '利用不可');
-            Alerts.show('pc', 'warn', '相手の声を取り込む入力を開けませんでした',
-              '他のアプリが使用中の可能性があります。\n（現在は自分の発言のみ文字起こししています）');
-          }
         }
 
         /* ---- STEP 3: 音声認識の開始（自分・相手を完全に分離） ---- */
@@ -1403,6 +1421,56 @@
       }
     },
 
+    /* ---------- 相手音声の取得 ---------- */
+
+    /**
+     * タブ／画面の音声共有から相手の声を取り出す。
+     * 失敗しても例外を投げず、自分側だけで開始を続行できるようにしている。
+     */
+    async _acquireRemoteAudio() {
+      // 事前に userActivation を判定すると、実際には呼べる場面まで弾いてしまう。
+      // まず呼んでみて、操作起点切れ（InvalidStateError）は下で個別に案内する。
+      let stream;
+      try {
+        stream = await AudioManager.acquireShareAudio();
+      } catch (err) {
+        const name = err && err.name ? err.name : '';
+        StatusView.pc('warn', '未共有');
+        if (name === 'NotAllowedError') {
+          Alerts.show('pc', 'warn', '相手の音声は共有されませんでした',
+            '共有をキャンセルしたため、相手の発言は文字起こしされません。\n' +
+            '（自分の発言のみ文字起こししています）');
+        } else if (name === 'InvalidStateError') {
+          Alerts.show('pc', 'warn', '相手の音声を取り込めませんでした',
+            'もう一度「文字起こし開始」を押してください。',);
+        } else {
+          console.warn('[TalkLog] 相手音声を取得できませんでした:', err);
+          Alerts.show('pc', 'warn', '相手の音声を取り込めませんでした',
+            (err && err.message) ? err.message : String(err));
+        }
+        return;
+      }
+
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        // 音声なしで共有された場合（「ウィンドウ」選択や音声共有OFF）
+        AudioManager.releaseShare();
+        StatusView.pc('warn', '音声なし');
+        Alerts.show('pc', 'warn', '共有した画面・タブの音声が取得できませんでした',
+          '共有ダイアログの左下にある「タブの音声を共有」または「システム音声を共有」を ON にしてください。\n' +
+          '※「ウィンドウ」を選ぶと音声は共有できません。「Chrome のタブ」か「画面全体」を選んでください。\n' +
+          '（このままでも自分の発言は文字起こしされます）');
+        return;
+      }
+
+      this.remoteTrack = audioTracks[0];
+      StatusView.pc('ok', '接続済み');
+      // 共有停止（Chrome の「共有を停止」バー）を検知する
+      this.remoteTrack.addEventListener('ended', () => this._onRemoteTrackEnded());
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) videoTrack.addEventListener('ended', () => this._onRemoteTrackEnded());
+    },
+
     /* ---------- トラック終了の検知 ---------- */
 
     _onRemoteTrackEnded() {
@@ -1414,11 +1482,11 @@
         this.remoteEngine.stop();
         this.remoteEngine = null;
       }
-      AudioManager.releaseLoopback();
+      AudioManager.releaseShare();
 
-      StatusView.pc('warn', '切断');
+      StatusView.pc('warn', '共有停止');
       TranscriptView.setInterim(SPEAKER.REMOTE, '');
-      Alerts.show('pc', 'warn', '相手音声の入力が切断されました',
+      Alerts.show('pc', 'warn', '画面共有が停止しました',
         '相手側の文字起こしのみ停止しました。自分側の文字起こしは継続しています。');
     },
 

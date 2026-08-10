@@ -10,7 +10,7 @@
 <!-- ?v= はキャッシュ対策。ファイルを更新したら必ずこの数字を上げること
      （GitHub Pages は 10 分間ブラウザにキャッシュさせるため、
        これが無いと index.html だけ新しく app.js が古い、という事故が起きる） -->
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <noscript>
@@ -43,6 +43,9 @@
     <span class="stat" id="pill-mic" data-state="off">
       <span aria-hidden="true">🎤</span>マイク：<b id="pill-mic-value">未接続</b>
     </span>
+    <select id="sel-mic" class="mic-select" aria-label="使用するマイク">
+      <option value="">既定のマイク</option>
+    </select>
     <span class="stat" id="pill-pc" data-state="off">
       <span aria-hidden="true">🔊</span>相手音声：<b id="pill-pc-value">未接続</b>
     </span>
@@ -99,6 +102,6 @@
 
 <div id="toast-area" class="toast-area" aria-live="polite"></div>
 
-<script src="app.js?v=3"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
