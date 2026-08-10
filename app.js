@@ -485,7 +485,13 @@
         throw new Error('この環境では画面共有を利用できません。');
       }
       const options = {
-        video: { frameRate: { ideal: 5, max: 10 } }, // 映像は使わないので負荷を最小化
+        video: {
+          frameRate: { ideal: 5, max: 10 }, // 映像は使わないので負荷を最小化
+          // ダイアログを「画面全体」タブで開かせるヒント。
+          // 選ぶ手間が減り、音声を共有できない「ウィンドウ」の誤選択も防げる。
+          // （あくまでヒントで、利用者は他のタブへ切り替えられる）
+          displaySurface: 'monitor',
+        },
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         systemAudio: 'include',        // 画面全体共有時にシステム音声を候補に含める
         selfBrowserSurface: 'exclude', // 自分のタブを候補から外す（音の回り込み防止）
@@ -1437,9 +1443,10 @@
         const name = err && err.name ? err.name : '';
         StatusView.pc('warn', '未共有');
         if (name === 'NotAllowedError') {
-          Alerts.show('pc', 'warn', '相手の音声は共有されませんでした',
-            '共有をキャンセルしたため、相手の発言は文字起こしされません。\n' +
-            '（自分の発言のみ文字起こししています）');
+          Alerts.show('pc', 'warn', '相手の音声が取り込まれていません',
+            '相手の発言も文字起こしする場合は、もう一度「文字起こし開始」を押し、\n' +
+            '「画面全体」を選んで、システム音声のスイッチを ON にして共有してください。\n' +
+            '（このままでも自分の発言は文字起こしされます）');
         } else if (name === 'InvalidStateError') {
           Alerts.show('pc', 'warn', '相手の音声を取り込めませんでした',
             'もう一度「文字起こし開始」を押してください。',);
@@ -1456,9 +1463,9 @@
         // 音声なしで共有された場合（「ウィンドウ」選択や音声共有OFF）
         AudioManager.releaseShare();
         StatusView.pc('warn', '音声なし');
-        Alerts.show('pc', 'warn', '共有した画面・タブの音声が取得できませんでした',
-          '共有ダイアログの左下にある「タブの音声を共有」または「システム音声を共有」を ON にしてください。\n' +
-          '※「ウィンドウ」を選ぶと音声は共有できません。「Chrome のタブ」か「画面全体」を選んでください。\n' +
+        Alerts.show('pc', 'warn', '相手の音声が取り込まれていません',
+          'もう一度「文字起こし開始」を押し、\n' +
+          '「画面全体」を選んで、システム音声のスイッチを ON にして共有してください。\n' +
           '（このままでも自分の発言は文字起こしされます）');
         return;
       }
