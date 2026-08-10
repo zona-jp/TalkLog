@@ -471,6 +471,13 @@ body { overflow: hidden; }
   font-size: 11.5px;
   color: var(--text-3);
 }
+.guide-link {
+  margin-right: 10px;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.guide-link:hover { text-decoration: underline; }
 
 /* ---------- トースト ---------- */
 .toast-area {

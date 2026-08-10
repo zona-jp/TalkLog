@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="TalkLog の使い方。会議の音声を「自分」「相手」に分けてリアルタイムに文字起こしするツールの操作説明。">
+<meta name="color-scheme" content="light dark">
+<title>TalkLog 使い方ガイド</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f6cbd'/%3E%3Cpath d='M16 7a3.2 3.2 0 0 0-3.2 3.2v5.4a3.2 3.2 0 1 0 6.4 0v-5.4A3.2 3.2 0 0 0 16 7Zm-7 8.2a1 1 0 0 1 2 0 5 5 0 0 0 10 0 1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V24h2.5a1 1 0 1 1 0 2h-7a1 1 0 1 1 0-2H15v-1.87A7 7 0 0 1 9 15.2Z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg:#f3f3f3; --surface:#fff; --surface-2:#fafafa; --surface-3:#f0f0f0;
+  --border:#e1e1e1; --border-strong:#d1d1d1;
+  --text:#1b1b1b; --text-2:#5c5c5c; --text-3:#8a8a8a;
+  --accent:#0f6cbd; --accent-soft:#e8f1fb; --accent-border:#b4d6f7;
+  --ok:#0f7b0f; --ok-soft:#eaf5ea;
+  --warn:#b26a00; --warn-soft:#fdf3e3; --warn-border:#e8c98a;
+  --danger:#c4314b; --danger-soft:#fdeef1;
+  --r-sm:4px; --r-md:8px; --r-lg:12px; --r-pill:999px;
+  --shadow-1:0 1px 2px rgba(0,0,0,.08); --shadow-2:0 2px 8px rgba(0,0,0,.10);
+  --font:"Segoe UI Variable Text","Segoe UI","Yu Gothic UI","Meiryo",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#141414; --surface:#1f1f1f; --surface-2:#242424; --surface-3:#2b2b2b;
+    --border:#333; --border-strong:#454545;
+    --text:#f2f2f2; --text-2:#bdbdbd; --text-3:#8f8f8f;
+    --accent:#479ef5; --accent-soft:#10263a; --accent-border:#2a4a68;
+    --ok:#6ccb5f; --ok-soft:#16240f;
+    --warn:#e5a54b; --warn-soft:#2a1f0d; --warn-border:#5a4419;
+    --danger:#ff6b7f; --danger-soft:#33161c;
+    --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 2px 8px rgba(0,0,0,.45);
+  }
+}
+*,*::before,*::after { box-sizing:border-box; }
+body {
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:var(--font); font-size:15px; line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width:820px; margin:0 auto; padding:24px 18px 64px; }
+
+/* ヘッダー */
+.head {
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:18px 20px; margin-bottom:22px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--r-lg); box-shadow:var(--shadow-1);
+}
+.mark {
+  width:42px; height:42px; flex:none; display:grid; place-items:center;
+  background:var(--accent); color:#fff; border-radius:var(--r-md);
+}
+.head h1 { margin:0; font-size:20px; font-weight:600; }
+.head p { margin:2px 0 0; font-size:13px; color:var(--text-2); }
+.head .grow { flex:1 1 auto; }
+.open-app {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:8px 16px; border-radius:var(--r-sm);
+  background:var(--accent); color:#fff; text-decoration:none;
+  font-size:14px; font-weight:600; white-space:nowrap;
+}
+.open-app:hover { filter:brightness(1.08); }
+
+/* 目次 */
+.toc {
+  padding:14px 20px; margin-bottom:26px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--r-lg); box-shadow:var(--shadow-1);
+}
+.toc h2 { margin:0 0 6px; font-size:13px; color:var(--text-3); font-weight:600; letter-spacing:.04em; }
+.toc ol { margin:0; padding-left:20px; font-size:14px; }
+.toc li { margin:2px 0; }
+.toc a { color:var(--accent); text-decoration:none; }
+.toc a:hover { text-decoration:underline; }
+
+/* 見出し */
+h2.sec {
+  margin:34px 0 12px; padding-bottom:8px;
+  font-size:18px; font-weight:600;
+  border-bottom:2px solid var(--accent);
+}
+h3 { margin:22px 0 6px; font-size:15px; font-weight:600; }
+p { margin:8px 0; }
+
+/* 手順 */
+.steps { list-style:none; margin:14px 0; padding:0; counter-reset:step; }
+.steps > li {
+  position:relative; counter-increment:step;
+  padding:14px 18px 14px 58px; margin-bottom:10px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--r-md); box-shadow:var(--shadow-1);
+}
+.steps > li::before {
+  content:counter(step);
+  position:absolute; left:16px; top:14px;
+  width:28px; height:28px; display:grid; place-items:center;
+  background:var(--accent); color:#fff;
+  border-radius:50%; font-size:14px; font-weight:700;
+}
+.steps strong { color:var(--text); }
+.steps .note { display:block; margin-top:4px; font-size:13px; color:var(--text-2); }
+
+/* 強調ボックス */
+.key {
+  margin:16px 0; padding:16px 18px;
+  background:var(--accent-soft); border:1px solid var(--accent-border);
+  border-left:4px solid var(--accent); border-radius:var(--r-md);
+}
+.key .label { font-size:12px; font-weight:700; color:var(--accent); letter-spacing:.04em; }
+.key .body { margin-top:4px; font-size:16px; font-weight:600; line-height:1.6; }
+
+.callout {
+  margin:14px 0; padding:12px 16px;
+  border:1px solid var(--border-strong); border-left:4px solid var(--text-3);
+  border-radius:var(--r-md); background:var(--surface); font-size:14px;
+}
+.callout.warn { background:var(--warn-soft); border-left-color:var(--warn); border-color:var(--warn-border); }
+.callout.ok { background:var(--ok-soft); border-left-color:var(--ok); }
+.callout .t { font-weight:600; margin-bottom:2px; }
+
+/* 表 */
+.tbl-scroll { overflow-x:auto; margin:14px 0; }
+table { width:100%; border-collapse:collapse; font-size:14px; background:var(--surface); }
+th, td { padding:9px 12px; border:1px solid var(--border); text-align:left; vertical-align:top; }
+th { background:var(--surface-3); font-weight:600; white-space:nowrap; }
+td code { white-space:nowrap; }
+
+/* 状態表示の見本 */
+.statdemo { display:flex; gap:16px; flex-wrap:wrap; margin:10px 0 4px; font-size:14px; }
+.statdemo span { display:inline-flex; align-items:center; gap:5px; }
+.statdemo b { font-weight:600; }
+.v-ok { color:var(--ok); }
+.v-warn { color:var(--warn); }
+.v-off { color:var(--text-3); }
+
+code {
+  padding:1px 5px; border-radius:var(--r-sm);
+  background:var(--surface-3); font-size:.92em;
+  font-family:"Cascadia Mono",Consolas,monospace;
+}
+.kbd {
+  display:inline-block; padding:1px 7px;
+  border:1px solid var(--border-strong); border-bottom-width:2px;
+  border-radius:var(--r-sm); background:var(--surface);
+  font-size:.88em; font-family:inherit;
+}
+.foot {
+  margin-top:44px; padding-top:16px;
+  border-top:1px solid var(--border);
+  font-size:12.5px; color:var(--text-3);
+}
+@media (max-width:640px) {
+  body { font-size:14.5px; }
+  .wrap { padding:14px 12px 48px; }
+  .head { padding:14px; }
+  .open-app { width:100%; justify-content:center; }
+  .steps > li { padding:12px 14px 12px 50px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="26" height="26"><path d="M16 7a3.2 3.2 0 0 0-3.2 3.2v5.4a3.2 3.2 0 1 0 6.4 0v-5.4A3.2 3.2 0 0 0 16 7Zm-7 8.2a1 1 0 0 1 2 0 5 5 0 0 0 10 0 1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V24h2.5a1 1 0 1 1 0 2h-7a1 1 0 1 1 0-2H15v-1.87A7 7 0 0 1 9 15.2Z" fill="currentColor"/></svg>
+    </span>
+    <div>
+      <h1>TalkLog 使い方ガイド</h1>
+      <p>会議の音声を「自分」と「相手」に分けて、リアルタイムに文字起こしします</p>
+    </div>
+    <span class="grow"></span>
+    <a class="open-app" href="index.html">アプリを開く</a>
+  </header>
+
+  <nav class="toc">
+    <h2>もくじ</h2>
+    <ol>
+      <li><a href="#prepare">はじめる前に</a></li>
+      <li><a href="#howto">使い方（3ステップ）</a></li>
+      <li><a href="#screen">画面の見方</a></li>
+      <li><a href="#save">保存・コピー</a></li>
+      <li><a href="#trouble">困ったとき</a></li>
+      <li><a href="#privacy">プライバシーについて</a></li>
+      <li><a href="#limit">できないこと</a></li>
+    </ol>
+  </nav>
+
+  <!-- ============ はじめる前に ============ -->
+  <h2 class="sec" id="prepare">はじめる前に</h2>
+
+  <div class="tbl-scroll">
+    <table>
+      <tr><th>ブラウザ</th><td><strong>Google Chrome 最新版</strong>をお使いください</td></tr>
+      <tr><th>OS</th><td>Windows 11 / Windows 10</td></tr>
+      <tr><th>音声機器</th><td><strong>ヘッドセット（イヤホン＋マイク）を強く推奨</strong></td></tr>
+      <tr><th>通信</th><td>インターネット接続が必要です</td></tr>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <div class="t">ヘッドセットを使ってください</div>
+    スピーカーで相手の声を鳴らすと、その音をマイクが拾ってしまい、<strong>相手の発言が「自分」としても二重に記録されます</strong>。イヤホンやヘッドセットを使えば、この問題は起こりません。
+  </div>
+
+  <p>Windows 側の設定変更は必要ありません。アプリを開いてすぐ使えます。</p>
+
+  <!-- ============ 使い方 ============ -->
+  <h2 class="sec" id="howto">使い方（3ステップ）</h2>
+
+  <ol class="steps">
+    <li>
+      <strong>使うマイクを選ぶ</strong>
+      <span class="note">画面上部のプルダウンから、実際に使うヘッドセットを選びます。「既定のマイク」のままだと、意図しない内蔵マイク（Web カメラのマイクなど）が使われることがあります。一度選べば次回から自動で適用されます。</span>
+    </li>
+    <li>
+      <strong>「▶ 文字起こし開始」を押して、マイクの使用を許可する</strong>
+      <span class="note">初回のみ、ブラウザから確認が表示されます。「許可」を選んでください。</span>
+    </li>
+    <li>
+      <strong>相手の声を取り込む設定をする</strong>
+      <span class="note">続いて表示される画面で、下記のとおり操作してください。</span>
+    </li>
+  </ol>
+
+  <div class="key">
+    <div class="label">ここがいちばん大事です</div>
+    <div class="body">「画面全体」を選んで、<br>システム音声のスイッチを ON にして共有</div>
+  </div>
+
+  <p>
+    このスイッチが<strong>相手の声そのもの</strong>です。初期状態では OFF になっているので、<strong>必ず ON にしてください。</strong>
+    ON にし忘れると、自分の発言しか文字起こしされません。
+  </p>
+
+  <div class="callout">
+    <div class="t">「共有」と表示されますが、どこかへ送信されるわけではありません</div>
+    これは「この音を TalkLog に聞かせてよい」という許可を出す操作です。ブラウザが勝手に PC の音を録ることを防ぐために、Chrome が必ず本人に確認する決まりになっています。画面の内容や音声が外部に配信されることはありません。
+  </div>
+
+  <div class="callout ok">
+    <div class="t">アプリの種類は問いません</div>
+    「画面全体＋システム音声」を選べば、相手の声が <strong>Zoom・Teams・Discord などのデスクトップアプリ</strong>から出ていても、<strong>ブラウザ上の会議</strong>から出ていても、同じように拾えます。アプリごとの設定は不要です。
+  </div>
+
+  <p>あとは会話するだけです。話した内容が、話している途中から画面に表示されます。終わったら「■ 停止」を押してください。</p>
+
+  <!-- ============ 画面の見方 ============ -->
+  <h2 class="sec" id="screen">画面の見方</h2>
+
+  <h3>状態表示</h3>
+  <p>画面上部で、いま何が使われているかを確認できます。</p>
+
+  <div class="statdemo">
+    <span>🎤 マイク：<b class="v-ok">使用中</b></span>
+    <span>🔊 相手音声：<b class="v-ok">使用中</b></span>
+  </div>
+  <p style="font-size:13.5px;color:var(--text-2);margin-top:2px;">↑ 両方がこの表示なら、正常に動いています。</p>
+
+  <div class="tbl-scroll">
+    <table>
+      <tr><th>表示</th><th>意味</th></tr>
+      <tr><td><b class="v-off">未接続</b></td><td>まだ開始していません</td></tr>
+      <tr><td><b class="v-ok">接続済み / 使用中</b></td><td>正常に動作しています</td></tr>
+      <tr><td><b class="v-warn">未共有</b></td><td>相手の声が取り込まれていません（自分の発言のみ記録されます）</td></tr>
+      <tr><td><b class="v-warn">音声なし</b></td><td>共有はされましたが、システム音声のスイッチが OFF でした</td></tr>
+      <tr><td><b class="v-warn">共有停止</b></td><td>画面下部の「共有を停止」を押したため、相手側だけ停止しました</td></tr>
+      <tr><td><b class="v-warn">再接続中</b></td><td>一時的に切れたため自動で復帰しています（そのままお待ちください）</td></tr>
+    </table>
+  </div>
+
+  <h3>会話の表示</h3>
+  <p>
+    <strong>自分</strong>の発言は右側に青色で、<strong>相手</strong>の発言は左側に表示されます。
+    話している途中の文字は「認識中」として薄く表示され、発言が確定すると正式な記録に変わります。
+  </p>
+  <p>
+    過去の記録を読み返している間は、新しい発言が来ても勝手に一番下へ戻りません。
+    画面下の「最新へ」を押すと、最新の位置に戻ります。
+  </p>
+
+  <!-- ============ 保存 ============ -->
+  <h2 class="sec" id="save">保存・コピー</h2>
+
+  <div class="tbl-scroll">
+    <table>
+      <tr><th>コピー</th><td>会話の全文をクリップボードにコピーします。メールやチャットにそのまま貼り付けられます</td></tr>
+      <tr><th>TXT保存</th><td>会話をテキストファイルとして保存します。メモ帳でそのまま開けます</td></tr>
+      <tr><th>クリア</th><td>画面の会話をすべて消去します（確認が表示されます）</td></tr>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <div class="t">記録はページを閉じると消えます</div>
+    会話の内容はブラウザの中だけに一時的に保持されています。<strong>必要な記録は、閉じる前に必ずコピーまたは TXT 保存してください。</strong>
+  </div>
+
+  <!-- ============ 困ったとき ============ -->
+  <h2 class="sec" id="trouble">困ったとき</h2>
+
+  <h3>相手の声が文字起こしされない</h3>
+  <p><strong>システム音声のスイッチを ON にし忘れているケースがほとんどです。</strong>「■ 停止」を押してから、もう一度「▶ 文字起こし開始」でやり直してください。</p>
+  <p>また、共有の選択で<strong>「ウィンドウ」を選ぶと音声は取得できません</strong>。必ず「画面全体」を選んでください。</p>
+
+  <h3>自分の声が「相手」として、または二重に記録される</h3>
+  <p>スピーカーで音を鳴らしていると起こります。<strong>ヘッドセットやイヤホンを使ってください。</strong></p>
+
+  <h3>自分の声が拾われない・精度が悪い</h3>
+  <p>画面上部のマイク選択で、実際に使っているヘッドセットが選ばれているか確認してください。あわせて、Windows の音量ミキサーでマイクの入力音量が下がっていないかもご確認ください。</p>
+
+  <h3>話しても何も表示されない</h3>
+  <p>15秒ほど反応がない場合、アプリが自動でヒントを表示します。マイクの許可状態、マイクの選択、インターネット接続をご確認ください。</p>
+
+  <h3>画面が真っ白、ボタンを押しても反応しない</h3>
+  <p>古い状態のファイルが残っている可能性があります。<span class="kbd">Ctrl</span> ＋ <span class="kbd">Shift</span> ＋ <span class="kbd">R</span> を押して再読み込みしてください。</p>
+
+  <h3>途中で止まった気がする</h3>
+  <p>音声認識は一定時間で自動的に区切られる仕様ですが、TalkLog が自動で再開します。「再接続中」と出ている間はそのままお待ちください。</p>
+
+  <!-- ============ プライバシー ============ -->
+  <h2 class="sec" id="privacy">プライバシーについて</h2>
+
+  <p>TalkLog にはサーバーがなく、会話の内容をどこかへ保存・送信する仕組みは含まれていません。記録はブラウザの中だけに保持され、ページを閉じると消えます。</p>
+
+  <div class="callout warn">
+    <div class="t">ただし「完全にPC内で処理される」わけではありません</div>
+    文字起こしそのものは、<strong>ブラウザ（Chrome）の音声認識機能</strong>が行っています。Chrome は多くの場合、<strong>音声データをブラウザ提供元のサーバーへ送信して認識処理を行います。</strong>
+    どこで処理されるかはブラウザとその設定に依存し、TalkLog 側で制御することはできません。
+  </div>
+
+  <p><strong>機密性の高い会議で利用する際は、事前に所属組織のルールをご確認ください。</strong></p>
+
+  <p>また「画面全体＋システム音声」で取り込むため、文字起こし中は <strong>PC で鳴っている音がすべて認識対象</strong>になります。会議中は他の音（音楽・動画・通知音）を鳴らさないようにしてください。</p>
+
+  <!-- ============ できないこと ============ -->
+  <h2 class="sec" id="limit">できないこと</h2>
+
+  <div class="tbl-scroll">
+    <table>
+      <tr><th>共有の選択を省略する</th><td>Chrome の仕様で、毎回かならず本人の選択が必要です。アプリ側で自動化・記憶することはできません</td></tr>
+      <tr><th>システム音声のスイッチを最初から ON にする</th><td>同じく Chrome 側の制御で、アプリからは変更できません</td></tr>
+      <tr><th>「ウィンドウ」共有で音声を取る</th><td>Chrome はウィンドウ単位の音声を出力できません</td></tr>
+      <tr><th>複数人を個別に判別する</th><td>「自分（マイク）」と「相手（PCの音）」の2つに分ける方式です。相手が複数いても全員「相手」になります</td></tr>
+      <tr><th>Chrome 以外での利用</th><td>Safari・Firefox・Edge は対象外です</td></tr>
+    </table>
+  </div>
+
+  <p>認識精度はブラウザの音声認識機能に依存します。固有名詞や専門用語は苦手で、句読点が付かない場合もあります。<strong>議事録として使う場合は、内容の確認・修正を前提にしてください。</strong></p>
+
+  <footer class="foot">
+    TalkLog 使い方ガイド ／ <a href="index.html" style="color:var(--accent);">アプリを開く</a>
+  </footer>
+</div>
+</body>
+</html>

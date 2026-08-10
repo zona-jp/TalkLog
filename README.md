@@ -122,11 +122,14 @@ Windows 側の設定変更は一切不要です。「文字起こし開始」を
 ビルド不要・バックエンド不要です。4ファイルをそのまま配置してください。
 
 ```
-index.html
+index.html   アプリ本体
+guide.html   利用者向けの使い方ガイド（アプリのフッターからリンク）
 style.css
 app.js
-README.md
+README.md    配布・開発者向け
 ```
+
+利用者に案内するのは `guide.html` です（例: `https://<ユーザー名>.github.io/<リポジトリ名>/guide.html`）。
 
 ### GitHub Pages
 
