@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="マイク（自分）と画面共有音声（相手）を同時に文字起こしする、リアルタイム会話文字起こしツール。">
+<meta name="color-scheme" content="light dark">
+<title>TalkLog — リアルタイム会話文字起こし</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f6cbd'/%3E%3Cpath d='M16 7a3.2 3.2 0 0 0-3.2 3.2v5.4a3.2 3.2 0 1 0 6.4 0v-5.4A3.2 3.2 0 0 0 16 7Zm-7 8.2a1 1 0 0 1 2 0 5 5 0 0 0 10 0 1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V24h2.5a1 1 0 1 1 0 2h-7a1 1 0 1 1 0-2H15v-1.87A7 7 0 0 1 9 15.2Z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<noscript>
+  <div class="noscript">このアプリの動作には JavaScript が必要です。</div>
+</noscript>
+
+<div class="app">
+
+  <!-- ===== ヘッダー ===== -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="22" height="22"><path d="M16 7a3.2 3.2 0 0 0-3.2 3.2v5.4a3.2 3.2 0 1 0 6.4 0v-5.4A3.2 3.2 0 0 0 16 7Zm-7 8.2a1 1 0 0 1 2 0 5 5 0 0 0 10 0 1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V24h2.5a1 1 0 1 1 0 2h-7a1 1 0 1 1 0-2H15v-1.87A7 7 0 0 1 9 15.2Z" fill="currentColor"/></svg>
+      </span>
+      <div class="brand-text">
+        <h1>TalkLog</h1>
+        <p>リアルタイム会話文字起こし</p>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <label class="field">
+        <span class="field-label">認識言語</span>
+        <select id="sel-lang" class="select">
+          <option value="ja-JP" selected>日本語</option>
+          <option value="en-US">English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="zh-CN">中文（简体）</option>
+          <option value="ko-KR">한국어</option>
+        </select>
+      </label>
+      <div id="session-badge" class="session-badge" data-state="idle">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="session-badge-text">待機中</span>
+        <span id="session-timer" class="timer" hidden>00:00</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== 状態バー ===== -->
+  <section class="statusbar" aria-label="接続状態">
+    <div class="pill" id="pill-mic" data-state="off">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="pill-label">マイク</span>
+      <span class="pill-value" id="pill-mic-value">未接続</span>
+      <span class="meter" aria-hidden="true"><span class="meter-bar" id="meter-self"></span></span>
+    </div>
+
+    <div class="pill" id="pill-pc" data-state="off">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="pill-label">PC音声</span>
+      <span class="pill-value" id="pill-pc-value">未接続</span>
+      <span class="meter" aria-hidden="true"><span class="meter-bar" id="meter-remote"></span></span>
+    </div>
+
+    <div class="pill" id="pill-rec-self" data-state="off">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="pill-label">文字認識（自分）</span>
+      <span class="pill-value" id="pill-rec-self-value">停止中</span>
+    </div>
+
+    <div class="pill" id="pill-rec-remote" data-state="off">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="pill-label">文字認識（相手）</span>
+      <span class="pill-value" id="pill-rec-remote-value">停止中</span>
+    </div>
+  </section>
+
+  <!-- ===== ツールバー ===== -->
+  <section class="toolbar">
+    <div class="toolbar-main">
+      <button id="btn-start" class="btn btn-primary" type="button">
+        <span class="btn-ico" aria-hidden="true">●</span>文字起こし開始
+      </button>
+      <button id="btn-stop" class="btn btn-danger" type="button" disabled>
+        <span class="btn-ico" aria-hidden="true">■</span>停止
+      </button>
+      <label class="check" title="OFFにすると自分のマイクだけを文字起こしします">
+        <input type="checkbox" id="chk-remote" checked>
+        <span>相手の音声（画面共有）も文字起こし</span>
+      </label>
+    </div>
+
+    <div class="toolbar-sub">
+      <button id="btn-copy" class="btn btn-ghost" type="button">全文コピー</button>
+      <button id="btn-txt" class="btn btn-ghost" type="button">TXT保存</button>
+      <button id="btn-csv" class="btn btn-ghost" type="button">CSV保存</button>
+      <button id="btn-clear" class="btn btn-ghost btn-ghost-danger" type="button">クリア</button>
+    </div>
+  </section>
+
+  <!-- ===== 通知エリア ===== -->
+  <div id="alert-area" class="alert-area" role="status" aria-live="polite"></div>
+
+  <!-- ===== 使い方 ===== -->
+  <details id="howto" class="howto">
+    <summary>はじめての方へ — 相手の声を拾うための手順</summary>
+    <ol class="howto-list">
+      <li>「文字起こし開始」を押す</li>
+      <li>マイクの使用を <b>許可</b> する</li>
+      <li>Chrome の共有ダイアログで <b>タブ</b>（相手の声が出ているタブ）または <b>画面全体</b> を選ぶ</li>
+      <li>ダイアログ左下の <b>「タブの音声を共有」/「システム音声を共有」</b> を必ず <b>ON</b> にする</li>
+      <li>「共有」を押すと文字起こしが始まります</li>
+    </ol>
+    <p class="howto-note">
+      ヘッドホンの使用を推奨します。スピーカー再生だとマイクが相手の声を拾い、「自分」として重複記録されることがあります。
+    </p>
+  </details>
+
+  <!-- ===== 会話表示 ===== -->
+  <main class="transcript-wrap">
+    <div id="scroll-area" class="scroll-area" tabindex="0" aria-label="会話ログ">
+      <p id="trim-notice" class="trim-notice" hidden>表示を軽くするため、古いメッセージは画面上から省略しています（保存・コピーには全件含まれます）。</p>
+
+      <div id="empty-state" class="empty-state">
+        <div class="empty-ico" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="44" height="44"><path d="M8 10h32a3 3 0 0 1 3 3v18a3 3 0 0 1-3 3H21l-9 7v-7H8a3 3 0 0 1-3-3V13a3 3 0 0 1 3-3Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M13 19h22M13 25h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </div>
+        <p class="empty-title">まだ会話がありません</p>
+        <p class="empty-desc">「文字起こし開始」を押すと、話した内容がここにリアルタイムで表示されます。</p>
+      </div>
+
+      <div id="entry-list" class="entry-list"></div>
+      <div id="live-area" class="live-area"></div>
+    </div>
+
+    <button id="btn-jump" class="jump-btn" type="button" hidden>
+      最新へ<span id="jump-count" class="jump-count"></span>
+    </button>
+  </main>
+
+  <!-- ===== フッター ===== -->
+  <footer class="app-footer">
+    <span id="stat-count">0 件</span>
+    <span class="sep" aria-hidden="true">・</span>
+    <span id="stat-engine">エンジン: 未判定</span>
+    <span class="grow"></span>
+    <span class="foot-note">音声はブラウザの音声認識機能で処理されます（外部サーバーで処理される場合があります）</span>
+  </footer>
+</div>
+
+<div id="toast-area" class="toast-area" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
