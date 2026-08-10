@@ -67,6 +67,12 @@
     RESTART_MAX_IN_WINDOW: 25,
     /** この時間以上連続稼働できたら「安定した」とみなしバックオフをリセット(ms) */
     STABLE_RUN_MS: 5000,
+    /** start() 後この時間内に onstart が来なければ作り直す(ms) */
+    START_TIMEOUT_MS: 3000,
+    /** ネットワークエラーが何回続いたら画面へ知らせるか */
+    NETWORK_FAILURES_BEFORE_NOTICE: 2,
+    /** 開始後この時間まったく認識結果が無ければヒントを出す(ms) */
+    NO_RESULT_HINT_MS: 15000,
     /** 画面下端からこの距離以内なら「最下部を見ている」と判定(px) */
     SCROLL_BOTTOM_THRESHOLD_PX: 56,
     /** DOM に残す確定メッセージの最大件数（超過分は画面からのみ間引く） */
@@ -179,9 +185,9 @@
      *  - 未対応環境: 引数が無視されて start() として動き出す → 直後に abort する
      *
      * マイク許可の取得後に一度だけ呼ぶこと（許可ダイアログを誘発しないため）。
-     * @returns {boolean}
+     * @returns {Promise<boolean>}
      */
-    detectTrackInput() {
+    async detectTrackInput() {
       if (this.trackInput !== null) return this.trackInput;
 
       // 動作確認用の手動オーバーライド（?trackInput=on / off）
@@ -195,20 +201,32 @@
 
       let probe = null;
       let supported = false;
+      let started = false;
+
+      // 判定用インスタンスが終了しきるまで待つための約束
+      let settle = () => {};
+      const settled = new Promise((resolve) => { settle = resolve; });
+
       try {
         probe = new this.SR();
         // 判定中のイベントでコンソールを汚さないよう空ハンドラを付けておく
         probe.onerror = () => {};
-        probe.onend = () => {};
+        probe.onend = () => settle();
         try {
           probe.start({});           // MediaStreamTrack ではない値をあえて渡す
+          // 例外が出なかった＝引数が無視された（未対応）。実際に動き出しているので止める
+          started = true;
         } catch (err) {
           supported = (err instanceof TypeError);
         }
       } catch (_) {
         supported = false;
-      } finally {
-        if (probe) { try { probe.abort(); } catch (_) { /* noop */ } }
+      }
+
+      if (probe && started) {
+        try { probe.abort(); } catch (_) { /* noop */ }
+        // 未対応環境ではマイクを掴んだ状態なので、完全に解放されるまで待ってから本番を開始する
+        await Promise.race([settled, new Promise((r) => window.setTimeout(r, 500))]);
       }
 
       this.trackInput = supported;
@@ -263,14 +281,47 @@
     toastArea: $('toast-area'),
   };
 
-  /** 起動時に DOM の取り違えを検出する（ID 不一致対策） */
+  /**
+   * 起動時に DOM の取り違えを検出する（ID 不一致対策）。
+   *
+   * これが起きる典型例は、index.html だけ新しくなり app.js が
+   * ブラウザキャッシュの古いままになったとき（GitHub Pages は 10 分間キャッシュする）。
+   * コンソールに出すだけだと画面が無言で死んで「ボタンが効かない」ように見えるため、
+   * 必ず画面にも対処方法を表示する。
+   */
   function verifyDom() {
     const missing = Object.keys(dom).filter((k) => !dom[k]);
-    if (missing.length > 0) {
-      console.error('[TalkLog] 必要な要素が見つかりません:', missing.join(', '));
-      return false;
-    }
-    return true;
+    if (missing.length === 0) return true;
+
+    console.error('[TalkLog] 必要な要素が見つかりません:', missing.join(', '));
+    showFatalBanner(
+      'ページの読み込みに失敗しました',
+      'ブラウザが古いファイルを表示している可能性があります。\n' +
+      'Ctrl + Shift + R（強制再読み込み）でページを読み直してください。'
+    );
+    return false;
+  }
+
+  /** dom 参照が使えない状況でも確実に出せる、独立したエラー表示 */
+  function showFatalBanner(title, message) {
+    const box = document.createElement('div');
+    box.setAttribute('role', 'alert');
+    box.style.cssText =
+      'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:9999;' +
+      'max-width:min(560px,92vw);padding:14px 18px;border-radius:8px;' +
+      'background:#c4314b;color:#fff;font:14px/1.6 "Segoe UI",system-ui,sans-serif;' +
+      'box-shadow:0 8px 24px rgba(0,0,0,.3);white-space:pre-wrap;';
+
+    const strong = document.createElement('div');
+    strong.style.fontWeight = '600';
+    strong.textContent = title;
+
+    const body = document.createElement('div');
+    body.textContent = message;
+
+    box.appendChild(strong);
+    box.appendChild(body);
+    document.body.appendChild(box);
   }
 
   /* =======================================================================
@@ -441,11 +492,18 @@
         ? this.micStream.getAudioTracks()[0].getSettings().deviceId
         : null;
 
-      return devices.find((d) =>
-        d.kind === 'audioinput' &&
+      const inputs = devices.filter((d) => d.kind === 'audioinput');
+      const found = inputs.find((d) =>
         d.deviceId !== micId &&
         LOOPBACK_LABEL_PATTERNS.some((re) => re.test(d.label))
       ) || null;
+
+      // 見つからない原因を追えるよう、Chrome が実際に返した入力一覧を残す
+      if (!found) {
+        console.info('[TalkLog] 検出された音声入力デバイス:',
+          inputs.map((d) => `${d.label || '(ラベルなし)'} [${d.deviceId.slice(0, 8)}]`));
+      }
+      return found;
     },
 
     /**
@@ -495,6 +553,7 @@
      * @param {(text:string)=>void} opts.onFinal    確定結果
      * @param {(state:string)=>void} opts.onState   状態変化
      * @param {(reason:string, message:string)=>void} opts.onFatal 復帰不能な停止
+     * @param {(reason:string, title:string, message:string)=>void} [opts.onNotice] 継続中の異常
      */
     constructor(opts) {
       this.speaker = opts.speaker;
@@ -502,6 +561,9 @@
       this.onFinal = opts.onFinal;
       this.onState = opts.onState;
       this.onFatal = opts.onFatal;
+      this.onNotice = opts.onNotice;
+      /** 連続したネットワークエラー数（黙って再接続し続けないための計測） */
+      this.networkFailures = 0;
 
       /** @type {SpeechRecognition|null} */
       this.recognition = null;
@@ -519,6 +581,7 @@
 
       // --- 自動再開の制御 ---
       this.restartTimerId = 0;
+      this.startWatchdogId = 0;
       this.consecutiveRestarts = 0;
       this.restartHistory = [];  // 直近の再開時刻（暴走検知用）
       this.startedAt = 0;
@@ -555,6 +618,8 @@
       }
 
       rec.onstart = () => {
+        window.clearTimeout(this.startWatchdogId);
+        this.startWatchdogId = 0;
         this.isRunning = true;
         this.startedAt = Date.now();
         this.lastError = '';
@@ -602,8 +667,9 @@
       // 確定のみのイベントでは interim が空になり、暫定表示が消える
       this.onInterim(interim.trim());
 
-      // 結果が返ってきている＝正常に動作している。バックオフを解除する
+      // 結果が返ってきている＝正常に動作している。バックオフと異常カウンタを解除する
       this.consecutiveRestarts = 0;
+      this.networkFailures = 0;
     }
 
     /** 認識セッション終了時。ユーザーが止めたのでなければ再開する */
@@ -655,6 +721,19 @@
         return;
       }
 
+      // ネットワークエラーが続くと「文字起こし中なのに何も出ない」状態になる。
+      // 黙って再接続し続けず、必ず画面へ知らせる。
+      if (err === 'network') {
+        this.networkFailures++;
+        if (this.networkFailures === CFG.NETWORK_FAILURES_BEFORE_NOTICE && this.onNotice) {
+          this.onNotice('network', '音声認識サーバーに接続できません',
+            'ブラウザの音声認識はインターネット経由で処理されます。ネットワーク接続、または社内プロキシ・ファイアウォールの設定をご確認ください。\n' +
+            '（接続を再試行し続けています）');
+        }
+      } else {
+        this.networkFailures = 0;
+      }
+
       // 十分に長く動けていたなら、バックオフをリセットしてよい
       if (ranMs >= CFG.STABLE_RUN_MS) this.consecutiveRestarts = 0;
 
@@ -704,10 +783,23 @@
         } else {
           rec.start();
         }
+        // start() は成功したが onstart が来ないケースを監視する。
+        // 到達しないまま放置すると「開始したのに無反応」になるため、必ず作り直す。
+        window.clearTimeout(this.startWatchdogId);
+        this.startWatchdogId = window.setTimeout(() => {
+          if (!this.enabled || this.isRunning) return;
+          console.warn(`[TalkLog] 認識が開始されませんでした。作り直します (${this.label})`);
+          this._disposeRecognition();
+          this._scheduleRestart(CFG.RESTART_BASE_DELAY_MS);
+        }, CFG.START_TIMEOUT_MS);
       } catch (err) {
-        // すでに開始済みの場合は一旦中断して次の onend に任せる
+        // 直前のセッションがまだ終了していない場合。
+        // start() が失敗した以上 onend は来ないので、必ず自分で再試行を予約する
+        // （ここで return するだけだと永久に停止したままになる）。
         if (err && err.name === 'InvalidStateError') {
           try { rec.abort(); } catch (_) { /* noop */ }
+          this._disposeRecognition();
+          this._scheduleRestart(CFG.RESTART_BASE_DELAY_MS * 2);
           return;
         }
         this.enabled = false;
@@ -737,7 +829,9 @@
     stop() {
       this.enabled = false;
       window.clearTimeout(this.restartTimerId);
+      window.clearTimeout(this.startWatchdogId);
       this.restartTimerId = 0;
+      this.startWatchdogId = 0;
       this.onInterim('');
 
       if (this.recognition && this.isRunning) {
@@ -1072,6 +1166,8 @@
     /** @type {MediaStreamTrack|null} */ micTrack: null,
     startedAt: 0,
     timerId: 0,
+    noResultTimerId: 0,
+    resultSeen: false,
 
     init() {
       if (!verifyDom()) return;
@@ -1175,7 +1271,7 @@
         this.micTrack.addEventListener('ended', () => this._onMicEnded());
 
         /* ---- 機能検出（マイク許可後に一度だけ実施する） ---- */
-        Support.detectTrackInput();
+        await Support.detectTrackInput();
         await Support.detectOnDevice(lang);
 
         /* ---- STEP 2: 相手音声（ループバック入力）の取得 ----
@@ -1184,8 +1280,7 @@
         if (!device) {
           StatusView.pc('warn', '利用不可');
           Alerts.show('pc', 'warn', '相手の声を取り込む入力が見つかりませんでした',
-            'このPCで「ステレオ ミキサー」などの録音デバイスが無効になっている可能性があります。\n' +
-            'Windows の「サウンドの設定」→「サウンドの詳細設定」→「録音」タブで、ステレオ ミキサーを有効にすると相手の発言も文字起こしできます。\n' +
+            'このPCで「ステレオ ミキサー」などの録音デバイスが Chrome から見えていません。\n' +
             '（現在は自分の発言のみ文字起こししています）');
         } else if (!Support.trackInput) {
           // 音声は取得できるが、このブラウザでは認識へ流し込めない
@@ -1209,8 +1304,7 @@
             console.warn('[TalkLog] 相手音声の入力を取得できませんでした:', err);
             StatusView.pc('warn', '利用不可');
             Alerts.show('pc', 'warn', '相手の声を取り込む入力を開けませんでした',
-              '他のアプリが使用中か、デバイスが無効になっている可能性があります。\n' +
-              '（現在は自分の発言のみ文字起こししています）');
+              '他のアプリが使用中の可能性があります。\n（現在は自分の発言のみ文字起こししています）');
           }
         }
 
@@ -1220,6 +1314,7 @@
 
         this._setPhase('running');
         this._startTimer();
+        this._startNoResultWatch();
 
       } catch (err) {
         // 各ステップで案内済みのエラーは黙って後始末する
@@ -1237,7 +1332,10 @@
     _startSelfEngine(lang) {
       this.selfEngine = new RecognitionEngine({
         speaker: SPEAKER.SELF,
-        onInterim: (text) => TranscriptView.setInterim(SPEAKER.SELF, text),
+        onInterim: (text) => {
+          if (text) this._markResultSeen();
+          TranscriptView.setInterim(SPEAKER.SELF, text);
+        },
         onFinal: (text) => this._commit(SPEAKER.SELF, text),
         onState: (state) => {
           const [kind, label] = REC_STATE_VIEW[state] || ['off', state];
@@ -1247,18 +1345,24 @@
           Alerts.show('rec-self', 'error', '自分側の文字起こしが停止しました', message);
           StatusView.mic('error', 'エラー');
         },
+        onNotice: (reason, title, message) => {
+          Alerts.show(`notice-${reason}`, 'error', title, message);
+        },
       });
       this.selfEngine.setLang(lang);
       this.selfEngine.setProcessLocally(Support.onDevice);
-      // トラック入力に対応していれば自分のマイクトラックを明示指定する
-      if (Support.trackInput && this.micTrack) this.selfEngine.setTrack(this.micTrack);
+      // 自分側は既定のマイク入力をそのまま使う。
+      // トラックを渡さない方が実装依存の少ない経路になるため、あえて指定しない。
       this.selfEngine.start();
     },
 
     _startRemoteEngine(lang) {
       this.remoteEngine = new RecognitionEngine({
         speaker: SPEAKER.REMOTE,
-        onInterim: (text) => TranscriptView.setInterim(SPEAKER.REMOTE, text),
+        onInterim: (text) => {
+          if (text) this._markResultSeen();
+          TranscriptView.setInterim(SPEAKER.REMOTE, text);
+        },
         onFinal: (text) => this._commit(SPEAKER.REMOTE, text),
         onState: (state) => {
           const [kind, label] = REC_STATE_VIEW[state] || ['off', state];
@@ -1267,6 +1371,9 @@
         onFatal: (reason, message) => {
           if (reason === 'track-ended') return; // 入力終了時は別途案内する
           Alerts.show('rec-remote', 'error', '相手側の文字起こしが停止しました', message);
+        },
+        onNotice: (reason, title, message) => {
+          Alerts.show(`notice-${reason}`, 'error', title, message);
         },
       });
       this.remoteEngine.setLang(lang);
@@ -1331,9 +1438,37 @@
     /* ---------- 確定テキストの登録 ---------- */
 
     _commit(speaker, text) {
+      this._markResultSeen();
       const entry = TranscriptStore.add(speaker, text);
       TranscriptView.appendFinal(entry);
       this._updateCount();
+    },
+
+    /** 何らかの認識結果が届いたことを記録し、ヒント表示を取り消す */
+    _markResultSeen() {
+      if (this.resultSeen) return;
+      this.resultSeen = true;
+      window.clearTimeout(this.noResultTimerId);
+      this.noResultTimerId = 0;
+      Alerts.dismiss('no-result');
+    },
+
+    /**
+     * 一定時間まったく認識結果が無い場合にヒントを出す。
+     * 「開始したのに何も起きない」ときに、利用者が原因を自力で切り分けられるようにする。
+     */
+    _startNoResultWatch() {
+      this.resultSeen = false;
+      window.clearTimeout(this.noResultTimerId);
+      this.noResultTimerId = window.setTimeout(() => {
+        if (this.resultSeen || this.phase !== 'running') return;
+        Alerts.show('no-result', 'warn', 'まだ音声を認識できていません',
+          '次をご確認ください。\n' +
+          '・Windows の設定で、使用中のマイクの入力音量が上がっているか\n' +
+          '・アドレスバー左の🎤アイコンでマイクが「許可」になっているか\n' +
+          '・インターネットに接続されているか（音声認識はサーバー経由で処理されます）\n' +
+          '・少し大きめの声で話してみてください');
+      }, CFG.NO_RESULT_HINT_MS);
     },
 
     _updateCount() {
@@ -1354,6 +1489,8 @@
     _stopTimer() {
       window.clearInterval(this.timerId);
       this.timerId = 0;
+      window.clearTimeout(this.noResultTimerId);
+      this.noResultTimerId = 0;
     },
 
     /* ---------- 停止 ---------- */

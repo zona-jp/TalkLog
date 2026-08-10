@@ -7,7 +7,10 @@
 <meta name="color-scheme" content="light dark">
 <title>TalkLog — リアルタイム会話文字起こし</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f6cbd'/%3E%3Cpath d='M16 7a3.2 3.2 0 0 0-3.2 3.2v5.4a3.2 3.2 0 1 0 6.4 0v-5.4A3.2 3.2 0 0 0 16 7Zm-7 8.2a1 1 0 0 1 2 0 5 5 0 0 0 10 0 1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V24h2.5a1 1 0 1 1 0 2h-7a1 1 0 1 1 0-2H15v-1.87A7 7 0 0 1 9 15.2Z' fill='%23fff'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css">
+<!-- ?v= はキャッシュ対策。ファイルを更新したら必ずこの数字を上げること
+     （GitHub Pages は 10 分間ブラウザにキャッシュさせるため、
+       これが無いと index.html だけ新しく app.js が古い、という事故が起きる） -->
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <noscript>
@@ -96,6 +99,6 @@
 
 <div id="toast-area" class="toast-area" aria-live="polite"></div>
 
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
